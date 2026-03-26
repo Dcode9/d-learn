@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>D'Learn Intelligent Watermarker</title>
+    <!-- ADDED mp4-muxer for extremely fast offline hardware encoding -->
+    <script src="https://unpkg.com/mp4-muxer/build/mp4-muxer.js"></script>
+    <style>
+        :root {
+            --primary: #4F46E5;
+            --primary-hover: #4338ca;
+            --bg: #0f172a;
+            --card-bg: #1e293b;
+            --text: #f8fafc;
+        }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .container {
+            background-color: var(--card-bg);
+            padding: 2rem;
+            border-radius: 1rem;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+            max-width: 800px;
+            width: 100%;
+            text-align: center;
+        }
+        h1 { margin-top: 0; color: #fff; }
+        p { color: #94a3b8; margin-bottom: 2rem; }
+        
+        .upload-area {
+            border: 2px dashed #475569;
+            padding: 2rem;
+            border-radius: 0.5rem;
+            margin-bottom: 1.5rem;
+            cursor: pointer;
+            transition: border-color 0.3s;
+        }
+        .upload-area:hover { border-color: var(--primary); }
+        input[type="file"] { display: none; }
+        
+        .btn {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 9999px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            font-size: 1rem;
+            text-decoration: none;
+            display: inline-block;
+            margin-top: 1rem;
+        }
+        .btn:hover { background-color: var(--primary-hover); }
+        .btn:disabled { background-color: #475569; cursor: not-allowed; }
+
+        #statusBox {
+            margin: 1.5rem 0;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            background-color: #334155;
+            font-family: monospace;
+            text-align: left;
+            min-height: 60px;
+            display: none;
+        }
+        .status-line { margin: 5px 0; }
+        .success { color: #4ade80; }
+        .warning { color: #fbbf24; }
+        .info { color: #60a5fa; }
+
+        /* Hidden elements used for processing */
+        #sourceVideo { display: none; }
+        #processingCanvas { 
+            max-width: 100%; 
+            border-radius: 0.5rem; 
+            margin-top: 1rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+            display: none;
+        }
+        
+        #resultContainer { display: none; margin-top: 2rem; border-top: 1px solid #334155; padding-top: 2rem; }
+        #outputVideo { max-width: 100%; border-radius: 0.5rem; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>D'Learn Video Processor</h1>
+        <p>Fast, automated watermarking.</p>
+
+        <label class="upload-area" id="uploadLabel">
+            <span style="font-size: 1.2rem; font-weight: bold; display: block; margin-bottom: 0.5rem;">Click to Upload Video</span>
+            <span style="color: #64748b;">MP4, WebM, or MOV</span>
+            <input type="file" id="videoUpload" accept="video/*">
+        </label>
+
+        <div id="statusBox"></div>
+        
+        <canvas id="processingCanvas"></canvas>
+        <video id="sourceVideo" muted playsinline></video>
+
+        <div id="resultContainer">
+            <h2 style="color: #4ade80;">Processing Complete!</h2>
+            <video id="outputVideo" controls></video><br>
+            <a id="downloadBtn" class="btn" download="DLearn_Video.webm">Download Result</a>
+        </div>
+    </div>
+
+    <script>
+        const videoInput = document.getElementById('videoUpload');
+        const sourceVideo = document.getElementById('sourceVideo');
+        const canvas = document.getElementById('processingCanvas');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const statusBox = document.getElementById('statusBox');
+        const resultContainer = document.getElementById('resultContainer');
+        const outputVideo = document.getElementById('outputVideo');
+        const downloadBtn = document.getElementById('downloadBtn');
+
+        // State variables
+        let currentFile = null;
+        // Hardcoded watermark position based on your exact values
+        let watermarkConfig = { x: 1095, y: 660, w: 160, h: 45, text: "D'Learn" };
+
+        function log(message, type = 'info') {
+            statusBox.style.display = 'block';
+            const line = document.createElement('div');
+            line.className = `status-line ${type}`;
+            line.innerText = `> ${message}`;
+            statusBox.appendChild(line);
+            statusBox.scrollTop = statusBox.scrollHeight;
+        }
+
+        videoInput.addEventListener('change', async (e) => {
+            currentFile = e.target.files[0];
+            if (!currentFile) return;
+
+            // Reset UI
+            statusBox.innerHTML = '';
+            resultContainer.style.display = 'none';
+            canvas.style.display = 'none';
+            
+            const fileUrl = URL.createObjectURL(currentFile);
+            sourceVideo.src = fileUrl;
+            
+            log('Video loaded. Preparing high-speed offline processing...', 'info');
+
+            sourceVideo.onloadedmetadata = () => {
+                canvas.width = sourceVideo.videoWidth;
+                canvas.height = sourceVideo.videoHeight;
+                
+                // Immediately start processing using fast WebCodecs
+                startFastProcessing();
+            };
+        });
+
+        async function startFastProcessing() {
+            if (!window.VideoEncoder) {
+                log("Error: Your browser doesn't support WebCodecs hardware encoding. Please use modern Chrome or Edge.", "warning");
+                return;
+            }
+
+            log('Rendering video as fast as possible (Offline WebCodecs)...', 'warning');
+            canvas.style.display = 'block'; 
+            
+            let audioBuffer = null;
+            let hasAudio = false;
+
+            try {
+                log('Extracting and analyzing audio track...', 'info');
+                const arrayBuffer = await currentFile.arrayBuffer();
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+                audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+                hasAudio = true;
+            } catch(e) {
+                log('No audio track found or could not decode. Rendering without audio.', 'warning');
+            }
+
+            // H264 requires even dimensions
+            const outWidth = Math.floor(canvas.width / 2) * 2;
+            const outHeight = Math.floor(canvas.height / 2) * 2;
+
+            const muxerOptions = {
+                target: new Mp4Muxer.ArrayBufferTarget(),
+                video: { codec: 'avc', width: outWidth, height: outHeight },
+                fastStart: 'in-memory'
+            };
+
+            if (hasAudio) {
+                muxerOptions.audio = { codec: 'aac', sampleRate: 44100, numberOfChannels: 2 };
+            }
+
+            const muxer = new Mp4Muxer.Muxer(muxerOptions);
+
+            const videoEncoder = new VideoEncoder({
+                output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+                error: e => console.error('VideoEncoder error:', e)
+            });
+
+            videoEncoder.configure({
+                codec: 'avc1.42001f', // standard baseline profile
+                width: outWidth,
+                height: outHeight,
+                bitrate: 5_000_000,
+                framerate: 30
+            });
+
+            if (hasAudio) {
+                log('Encoding audio offline...', 'info');
+                const audioEncoder = new AudioEncoder({
+                    output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+                    error: e => console.error('AudioEncoder error:', e)
+                });
+                audioEncoder.configure({
+                    codec: 'mp4a.40.2',
+                    sampleRate: 44100,
+                    numberOfChannels: 2,
+                    bitrate: 128000
+                });
+
+                const numberOfFrames = audioBuffer.length;
+                const numSamplesPerChunk = 44100; // 1s chunks
+                
+                for (let i = 0; i < numberOfFrames; i += numSamplesPerChunk) {
+                    const frameCount = Math.min(numSamplesPerChunk, numberOfFrames - i);
+                    const planarData = new Float32Array(frameCount * 2);
+                    
+                    // Left Channel
+                    planarData.set(audioBuffer.getChannelData(0).subarray(i, i + frameCount), 0);
+                    // Right Channel (duplicate if mono)
+                    if (audioBuffer.numberOfChannels > 1) {
+                        planarData.set(audioBuffer.getChannelData(1).subarray(i, i + frameCount), frameCount);
+                    } else {
+                        planarData.set(audioBuffer.getChannelData(0).subarray(i, i + frameCount), frameCount);
+                    }
+
+                    const audioData = new AudioData({
+                        format: 'f32-planar',
+                        sampleRate: 44100,
+                        numberOfFrames: frameCount,
+                        numberOfChannels: 2,
+                        timestamp: (i / 44100) * 1e6,
+                        data: planarData
+                    });
+                    audioEncoder.encode(audioData);
+                    audioData.close();
+                }
+                await audioEncoder.flush();
+            }
+
+            log('Encoding video frames...', 'info');
+            const fps = 30;
+            const duration = sourceVideo.duration;
+            const totalFrames = Math.floor(duration * fps);
+            
+            sourceVideo.pause();
+
+            const progressStatus = document.createElement('div');
+            progressStatus.className = 'status-line info';
+            statusBox.appendChild(progressStatus);
+
+            for (let i = 0; i < totalFrames; i++) {
+                const t = i / fps;
+                sourceVideo.currentTime = t;
+                
+                // Wait for high-speed seek to frame
+                await new Promise((resolve) => {
+                    const onSeeked = () => {
+                        sourceVideo.removeEventListener('seeked', onSeeked);
+                        resolve();
+                    };
+                    sourceVideo.addEventListener('seeked', onSeeked);
+                });
+
+                ctx.drawImage(sourceVideo, 0, 0, outWidth, outHeight);
+                drawPill(watermarkConfig.x, watermarkConfig.y, watermarkConfig.w, watermarkConfig.h, watermarkConfig.text);
+
+                const frame = new VideoFrame(canvas, { timestamp: t * 1e6 });
+                videoEncoder.encode(frame, { keyFrame: i % 30 === 0 });
+                frame.close();
+                
+                // Keep UI updated but without freezing the browser
+                if (i % 15 === 0) {
+                    progressStatus.innerText = `> Processing video frame ${i} / ${totalFrames}...`;
+                    await new Promise(r => setTimeout(r, 0)); 
+                }
+            }
+
+            progressStatus.innerText = `> Video frames complete. Flushing encoder...`;
+            
+            await videoEncoder.flush();
+            muxer.finalize();
+            
+            log('Finalizing MP4 file...', 'info');
+            const mp4Blob = new Blob([muxer.target.buffer], { type: 'video/mp4' });
+            const url = URL.createObjectURL(mp4Blob);
+            
+            outputVideo.src = url;
+            downloadBtn.href = url;
+            downloadBtn.download = `DLearn_Video.mp4`;
+            
+            canvas.style.display = 'none';
+            resultContainer.style.display = 'block';
+            log('Processing finished successfully!', 'success');
+        }
+
+        function drawPill(x, y, w, h, text) {
+            const radius = h / 2; // Makes it a perfect pill shape
+            
+            // Draw Shadow for depth
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+            ctx.shadowBlur = 12;
+            ctx.shadowOffsetX = 2;
+            ctx.shadowOffsetY = 4;
+
+            // Draw solid white container
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.roundRect(x, y, w, h, radius);
+            ctx.fill();
+
+            // Draw Grey Border
+            ctx.shadowColor = 'transparent'; // Remove shadow for border and text
+            ctx.shadowBlur = 0;
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#94a3b8'; // Cool grey border
+            ctx.stroke();
+
+            // Draw "D'Learn" Text with Personality
+            ctx.fillStyle = '#1e293b'; // Slate dark blue
+            
+            // Scale font size based on pill height to ensure it fits dynamic sizes
+            const fontSize = Math.max(16, Math.floor(h * 0.45)); 
+            
+            // Personality: Italic, heavy weight, elegant fallback fonts
+            ctx.font = `italic 800 ${fontSize}px "Trebuchet MS", "Segoe UI", sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Center text perfectly inside the pill
+            ctx.fillText(text, x + (w / 2), y + (h / 2) + 2); 
+        }
+
+        function renderLoop() {
+            if (sourceVideo.paused || sourceVideo.ended) {
+                if (mediaRecorder.state !== 'inactive') {
+                    mediaRecorder.stop();
+                }
+                cancelAnimationFrame(animationFrameId);
+                return;
+            }
+
+            // Draw original video frame
+            ctx.drawImage(sourceVideo, 0, 0, canvas.width, canvas.height);
+            
+            // Draw Watermark on top
+            drawPill(watermarkConfig.x, watermarkConfig.y, watermarkConfig.w, watermarkConfig.h, watermarkConfig.text);
+
+            // Loop next frame
+            animationFrameId = requestAnimationFrame(renderLoop);
+        }
+    </script>
+</body>
+</html>
